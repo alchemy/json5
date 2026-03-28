@@ -20,6 +20,16 @@ type decodeState struct {
 	depth                 int
 }
 
+var decodeStatePool = sync.Pool{
+	New: func() any { return new(decodeState) },
+}
+
+func newDecodeState() *decodeState {
+	d := decodeStatePool.Get().(*decodeState)
+	*d = decodeState{}
+	return d
+}
+
 func (d *decodeState) init(data []byte) {
 	d.scanner = scanner{data: data}
 }
@@ -54,6 +64,21 @@ func (d *decodeState) value(tok token, rv reflect.Value) error {
 			}
 			return ptr.Interface().(json.Unmarshaler).UnmarshalJSON(raw)
 		}
+	}
+
+	// Fast path: when target is any (interface{} with no methods), avoid
+	// reflect for all nested values. This is the most common decode path.
+	if rv.Kind() == reflect.Interface && rv.NumMethod() == 0 {
+		v, err := d.valueInterface(tok)
+		if err != nil {
+			return err
+		}
+		if v != nil {
+			rv.Set(reflect.ValueOf(v))
+		} else {
+			rv.Set(reflect.Zero(rv.Type()))
+		}
+		return nil
 	}
 
 	switch tok.typ {
@@ -849,6 +874,138 @@ func (d *decodeState) skipArray() error {
 		if err := d.skipValue(tok); err != nil {
 			return err
 		}
+	}
+}
+
+// --- Fast paths for decoding into any (interface{}) ---
+// These avoid reflect entirely for the most common decode target,
+// mirroring the approach used by encoding/json.
+
+func (d *decodeState) valueInterface(tok token) (any, error) {
+	switch tok.typ {
+	case tokenObjectOpen:
+		return d.objectInterface()
+	case tokenArrayOpen:
+		return d.arrayInterface()
+	case tokenString:
+		return tok.value, nil
+	case tokenNumber:
+		if d.useNumber {
+			return Number(tok.value), nil
+		}
+		f, err := parseJSON5Number(tok.value)
+		if err != nil {
+			return nil, d.scanner.error(fmt.Sprintf("invalid number: %s", tok.value))
+		}
+		return f, nil
+	case tokenTrue:
+		return true, nil
+	case tokenFalse:
+		return false, nil
+	case tokenNull:
+		return nil, nil
+	case tokenEOF:
+		return nil, d.scanner.error("unexpected end of input")
+	default:
+		return nil, d.scanner.error(fmt.Sprintf("unexpected token %q", tok.value))
+	}
+}
+
+func (d *decodeState) objectInterface() (map[string]any, error) {
+	d.depth++
+	if d.depth > maxNestingDepth {
+		return nil, d.scanner.error("exceeded max nesting depth")
+	}
+	defer func() { d.depth-- }()
+
+	m := make(map[string]any)
+	first := true
+	for {
+		tok, err := d.scanner.scan()
+		if err != nil {
+			return nil, err
+		}
+		if tok.typ == tokenObjectClose {
+			return m, nil
+		}
+		if !first {
+			if tok.typ != tokenComma {
+				return nil, d.scanner.error("expected comma in object")
+			}
+			tok, err = d.scanner.scan()
+			if err != nil {
+				return nil, err
+			}
+			if tok.typ == tokenObjectClose {
+				return m, nil // trailing comma
+			}
+		}
+		first = false
+
+		key, err := d.resolveKey(tok)
+		if err != nil {
+			return nil, err
+		}
+
+		colon, err := d.scanner.scan()
+		if err != nil {
+			return nil, err
+		}
+		if colon.typ != tokenColon {
+			return nil, d.scanner.error("expected colon after object key")
+		}
+
+		valTok, err := d.scanner.scan()
+		if err != nil {
+			return nil, err
+		}
+		val, err := d.valueInterface(valTok)
+		if err != nil {
+			return nil, err
+		}
+		m[key] = val
+	}
+}
+
+func (d *decodeState) arrayInterface() ([]any, error) {
+	d.depth++
+	if d.depth > maxNestingDepth {
+		return nil, d.scanner.error("exceeded max nesting depth")
+	}
+	defer func() { d.depth-- }()
+
+	var arr []any
+	first := true
+	for {
+		tok, err := d.scanner.scan()
+		if err != nil {
+			return nil, err
+		}
+		if tok.typ == tokenArrayClose {
+			if arr == nil {
+				arr = []any{}
+			}
+			return arr, nil
+		}
+		if !first {
+			if tok.typ != tokenComma {
+				return nil, d.scanner.error("expected comma in array")
+			}
+			tok, err = d.scanner.scan()
+			if err != nil {
+				return nil, err
+			}
+			if tok.typ == tokenArrayClose {
+				return arr, nil // trailing comma
+			}
+		}
+		first = false
+
+		val, err := d.valueInterface(tok)
+		if err != nil {
+			return nil, err
+		}
+		arr = append(arr, val)
 	}
 }
 

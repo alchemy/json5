@@ -167,8 +167,10 @@ func MarshalIndent(v any, prefix, indent string) ([]byte, error) {
 // pointed to by v. If v is nil or not a pointer, Unmarshal returns an
 // InvalidUnmarshalError.
 func Unmarshal(data []byte, v any) error {
-	d := &decodeState{}
+	d := newDecodeState()
+	defer decodeStatePool.Put(d)
 	d.init(data)
+	d.scanner.noRaw = true
 	if err := d.unmarshal(v); err != nil {
 		return err
 	}
@@ -187,8 +189,10 @@ func Unmarshal(data []byte, v any) error {
 
 // Valid reports whether data is a valid JSON5 encoding.
 func Valid(data []byte) bool {
-	d := &decodeState{}
+	d := newDecodeState()
+	defer decodeStatePool.Put(d)
 	d.init(data)
+	d.scanner.noRaw = true
 	var raw any
 	if err := d.unmarshal(&raw); err != nil {
 		return false
@@ -241,6 +245,7 @@ func (dec *Decoder) Decode(v any) error {
 		useNumber:             dec.useNumber,
 		disallowUnknownFields: dec.disallowUnknownFields,
 	}
+	d.scanner.noRaw = true
 	tok, err := d.scanner.scan()
 	if err != nil {
 		dec.sc = d.scanner

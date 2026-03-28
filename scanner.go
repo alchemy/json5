@@ -33,11 +33,12 @@ type token struct {
 }
 
 type scanner struct {
-	data []byte
-	pos  int
-	r    io.Reader // optional reader for streaming (nil for Unmarshal)
-	eof  bool      // reader exhausted
-	base int64     // bytes discarded so far, for absolute offsets
+	data  []byte
+	pos   int
+	r     io.Reader // optional reader for streaming (nil for Unmarshal)
+	eof   bool      // reader exhausted
+	base  int64     // bytes discarded so far, for absolute offsets
+	noRaw bool      // skip raw string allocation for string tokens
 }
 
 // absPos returns the absolute byte offset in the input stream.
@@ -240,7 +241,10 @@ func (s *scanner) scanString() (token, error) {
 		ch := s.data[s.pos]
 		if ch == quote {
 			s.pos++
-			raw := string(s.data[pos:s.pos])
+			var raw string
+			if !s.noRaw {
+				raw = string(s.data[pos:s.pos])
+			}
 			return token{typ: tokenString, value: string(buf), raw: raw, pos: apos}, nil
 		}
 		if ch == '\\' {
