@@ -169,7 +169,20 @@ func MarshalIndent(v any, prefix, indent string) ([]byte, error) {
 func Unmarshal(data []byte, v any) error {
 	d := &decodeState{}
 	d.init(data)
-	return d.unmarshal(v)
+	if err := d.unmarshal(v); err != nil {
+		return err
+	}
+	// Reject trailing non-whitespace/comment content.
+	if err := d.scanner.skipWhitespace(); err != nil {
+		return err
+	}
+	if d.scanner.pos < len(d.scanner.data) {
+		return &SyntaxError{
+			msg:    fmt.Sprintf("unexpected trailing character %q", d.scanner.data[d.scanner.pos]),
+			Offset: int64(d.scanner.pos),
+		}
+	}
+	return nil
 }
 
 // Valid reports whether data is a valid JSON5 encoding.
@@ -186,17 +199,18 @@ func Valid(data []byte) bool {
 }
 
 // A Decoder reads and decodes JSON5 values from an input stream.
+// It reads input incrementally using a sliding window buffer, so it can
+// decode a stream of values without loading the entire input into memory.
 type Decoder struct {
-	r       io.Reader
-	buf     []byte
-	err     error
-	useNumber bool
+	sc                    scanner
+	err                   error
+	useNumber             bool
 	disallowUnknownFields bool
 }
 
 // NewDecoder returns a new decoder that reads from r.
 func NewDecoder(r io.Reader) *Decoder {
-	return &Decoder{r: r}
+	return &Decoder{sc: scanner{r: r}}
 }
 
 // UseNumber causes the Decoder to unmarshal a number into an interface{} as a
@@ -215,24 +229,34 @@ func (dec *Decoder) DisallowUnknownFields() {
 // Decode reads the next JSON5 value from its input and stores it in the value
 // pointed to by v.
 func (dec *Decoder) Decode(v any) error {
-	if dec.err != nil && dec.err != io.EOF {
+	if dec.err != nil {
 		return dec.err
 	}
-	if dec.buf == nil {
-		dec.buf, dec.err = io.ReadAll(dec.r)
-		if dec.err != nil {
-			return dec.err
-		}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Pointer || rv.IsNil() {
+		return &InvalidUnmarshalError{Type: reflect.TypeOf(v)}
 	}
-	d := &decodeState{}
-	d.init(dec.buf)
-	d.useNumber = dec.useNumber
-	d.disallowUnknownFields = dec.disallowUnknownFields
-	err := d.unmarshal(v)
+	d := &decodeState{
+		scanner:               dec.sc,
+		useNumber:             dec.useNumber,
+		disallowUnknownFields: dec.disallowUnknownFields,
+	}
+	tok, err := d.scanner.scan()
+	if err != nil {
+		dec.sc = d.scanner
+		dec.err = err
+		return err
+	}
+	if tok.typ == tokenEOF {
+		dec.sc = d.scanner
+		dec.err = io.EOF
+		return io.EOF
+	}
+	err = d.value(tok, rv.Elem())
+	dec.sc = d.scanner
 	if err != nil {
 		return err
 	}
-	dec.buf = dec.buf[d.scanner.pos:]
 	return nil
 }
 

@@ -3,6 +3,7 @@ package json5
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"math"
 	"reflect"
 	"strings"
@@ -543,6 +544,81 @@ func TestDecoderUseNumber(t *testing.T) {
 	if n.String() != "42" {
 		t.Errorf("got %s, want 42", n)
 	}
+}
+
+func TestDecoderMultipleValues(t *testing.T) {
+	r := strings.NewReader(`{"a":1} {"b":2} {"c":3}`)
+	dec := NewDecoder(r)
+	var count int
+	for {
+		var v map[string]any
+		err := dec.Decode(&v)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		count++
+	}
+	if count != 3 {
+		t.Errorf("got %d values, want 3", count)
+	}
+}
+
+func TestDecoderCommentsBetweenValues(t *testing.T) {
+	r := strings.NewReader("// comment\n42\n/* block */\n\"hello\"")
+	dec := NewDecoder(r)
+	var vals []any
+	for {
+		var v any
+		err := dec.Decode(&v)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		vals = append(vals, v)
+	}
+	if len(vals) != 2 {
+		t.Fatalf("got %d values, want 2", len(vals))
+	}
+	if vals[0] != float64(42) {
+		t.Errorf("vals[0] = %v, want 42", vals[0])
+	}
+	if vals[1] != "hello" {
+		t.Errorf("vals[1] = %v, want hello", vals[1])
+	}
+}
+
+func TestDecoderLargeValue(t *testing.T) {
+	big := `{"key":"` + strings.Repeat("x", 8000) + `"}`
+	dec := NewDecoder(strings.NewReader(big))
+	var v map[string]any
+	if err := dec.Decode(&v); err != nil {
+		t.Fatal(err)
+	}
+	if len(v["key"].(string)) != 8000 {
+		t.Errorf("got key length %d, want 8000", len(v["key"].(string)))
+	}
+}
+
+func TestDecoderEOF(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		dec := NewDecoder(strings.NewReader(""))
+		var v any
+		if err := dec.Decode(&v); err != io.EOF {
+			t.Errorf("got %v, want io.EOF", err)
+		}
+	})
+	t.Run("whitespace only", func(t *testing.T) {
+		dec := NewDecoder(strings.NewReader("   \n\t  "))
+		var v any
+		if err := dec.Decode(&v); err != io.EOF {
+			t.Errorf("got %v, want io.EOF", err)
+		}
+	})
 }
 
 func TestEncoder(t *testing.T) {

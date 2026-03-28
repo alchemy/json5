@@ -8,35 +8,7 @@ import (
 
 // knownFailures lists test files where the parser does not yet match the spec.
 // Each entry documents the non-conformance so it can be fixed later.
-var knownFailures = map[string]string{
-	// Parser does not reject trailing content after a valid top-level value.
-	"comments/unterminated-block-comment.txt": "parser stops after first valid value, ignores trailing unterminated comment",
-
-	// Parser accepts float and hex literals in exponents (e.g. 1e2.3, 1e0x1).
-	// JSON5 requires integer-only exponents.
-	"numbers/integer-with-float-exponent.txt":              "parser accepts float exponent (1e2.3)",
-	"numbers/integer-with-hexadecimal-exponent.txt":        "parser accepts hex exponent (1e0x1)",
-	"numbers/integer-with-negative-float-exponent.txt":     "parser accepts negative float exponent (1e-2.3)",
-	"numbers/integer-with-negative-hexadecimal-exponent.txt": "parser accepts negative hex exponent (1e-0x1)",
-	"numbers/integer-with-positive-float-exponent.txt":     "parser accepts positive float exponent (1e+2.3)",
-	"numbers/integer-with-positive-hexadecimal-exponent.txt": "parser accepts positive hex exponent (1e+0x1)",
-
-	// Parser does not reject octal literals (e.g. 010, 0777).
-	// JSON5 explicitly disallows octal.
-	"numbers/octal.txt":            "parser accepts octal literal (010)",
-	"numbers/negative-octal.txt":   "parser accepts negative octal (-010)",
-	"numbers/positive-octal.txt":   "parser accepts positive octal (+010)",
-	"numbers/zero-octal.txt":       "parser accepts zero octal (00)",
-	"numbers/negative-zero-octal.txt": "parser accepts negative zero octal (-00)",
-	"numbers/positive-zero-octal.txt": "parser accepts positive zero octal (+00)",
-
-	// Parser does not reject "noctal" literals (leading zero followed by 8/9).
-	// These are valid ES5 but explicitly not valid JSON5.
-	"numbers/noctal.js":                        "parser accepts noctal (080)",
-	"numbers/noctal-with-leading-octal-digit.js": "parser accepts noctal with leading octal digit (0780)",
-	"numbers/negative-noctal.js":               "parser accepts negative noctal (-080)",
-	"numbers/positive-noctal.js":               "parser accepts positive noctal (+080)",
-}
+var knownFailures = map[string]string{}
 
 func TestConformance(t *testing.T) {
 	root := "testdata/json5-tests"
