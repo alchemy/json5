@@ -16,6 +16,7 @@ const maxNestingDepth = 10000
 type decodeState struct {
 	scanner               scanner
 	useNumber             bool
+	useOrderedMap         bool
 	disallowUnknownFields bool
 	depth                 int
 }
@@ -884,6 +885,9 @@ func (d *decodeState) skipArray() error {
 func (d *decodeState) valueInterface(tok token) (any, error) {
 	switch tok.typ {
 	case tokenObjectOpen:
+		if d.useOrderedMap {
+			return d.orderedMapInterface()
+		}
 		return d.objectInterface()
 	case tokenArrayOpen:
 		return d.arrayInterface()
@@ -964,6 +968,62 @@ func (d *decodeState) objectInterface() (map[string]any, error) {
 			return nil, err
 		}
 		m[key] = val
+	}
+}
+
+func (d *decodeState) orderedMapInterface() (*OrderedMap, error) {
+	d.depth++
+	if d.depth > maxNestingDepth {
+		return nil, d.scanner.error("exceeded max nesting depth")
+	}
+	defer func() { d.depth-- }()
+
+	m := NewOrderedMap()
+	first := true
+	for {
+		tok, err := d.scanner.scan()
+		if err != nil {
+			return nil, err
+		}
+		if tok.typ == tokenObjectClose {
+			return m, nil
+		}
+		if !first {
+			if tok.typ != tokenComma {
+				return nil, d.scanner.error("expected comma in object")
+			}
+			tok, err = d.scanner.scan()
+			if err != nil {
+				return nil, err
+			}
+			if tok.typ == tokenObjectClose {
+				return m, nil // trailing comma
+			}
+		}
+		first = false
+
+		key, err := d.resolveKey(tok)
+		if err != nil {
+			return nil, err
+		}
+
+		colon, err := d.scanner.scan()
+		if err != nil {
+			return nil, err
+		}
+		if colon.typ != tokenColon {
+			return nil, d.scanner.error("expected colon after object key")
+		}
+
+		valTok, err := d.scanner.scan()
+		if err != nil {
+			return nil, err
+		}
+		val, err := d.valueInterface(valTok)
+		if err != nil {
+			return nil, err
+		}
+		m.Set(key, val)
 	}
 }
 

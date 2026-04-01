@@ -209,6 +209,7 @@ type Decoder struct {
 	sc                    scanner
 	err                   error
 	useNumber             bool
+	useOrderedMap         bool
 	disallowUnknownFields bool
 }
 
@@ -221,6 +222,13 @@ func NewDecoder(r io.Reader) *Decoder {
 // Number instead of as a float64.
 func (dec *Decoder) UseNumber() {
 	dec.useNumber = true
+}
+
+// UseOrderedMap causes the Decoder to unmarshal objects into *OrderedMap
+// instead of map[string]any when the target is an interface{}.
+// This preserves the insertion order of keys.
+func (dec *Decoder) UseOrderedMap() {
+	dec.useOrderedMap = true
 }
 
 // DisallowUnknownFields causes the Decoder to return an error when the
@@ -243,6 +251,7 @@ func (dec *Decoder) Decode(v any) error {
 	d := &decodeState{
 		scanner:               dec.sc,
 		useNumber:             dec.useNumber,
+		useOrderedMap:         dec.useOrderedMap,
 		disallowUnknownFields: dec.disallowUnknownFields,
 	}
 	d.scanner.noRaw = true
