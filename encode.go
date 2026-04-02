@@ -406,9 +406,10 @@ func isEmptyValue(rv reflect.Value) bool {
 // indentJSON5 adds indentation to JSON5 output. Unlike json.Indent, this
 // handles JSON5-specific tokens like Infinity and NaN.
 func indentJSON5(dst *bytes.Buffer, src []byte, prefix, indent string) error {
-	sc := &scanner{data: src}
+	sc := &scanner{data: src, preserveComments: true}
 	var depth int
 	var needNewline bool
+	var wroteContent bool // true once any key/value has been written at some depth
 
 	for {
 		tok, err := sc.scan()
@@ -420,6 +421,18 @@ func indentJSON5(dst *bytes.Buffer, src []byte, prefix, indent string) error {
 		}
 
 		switch tok.typ {
+		case tokenComment:
+			if tok.value == "inline" {
+				// Inline comment: append on the same line as the previous value.
+				dst.WriteByte(' ')
+				dst.WriteString(tok.raw)
+			} else {
+				// Head comment: starts on its own line, indented to current depth.
+				dst.WriteByte('\n')
+				writeIndent(dst, prefix, indent, depth)
+				dst.WriteString(tok.raw)
+				needNewline = true
+			}
 		case tokenObjectOpen, tokenArrayOpen:
 			if needNewline {
 				dst.WriteByte('\n')
@@ -429,9 +442,10 @@ func indentJSON5(dst *bytes.Buffer, src []byte, prefix, indent string) error {
 			dst.WriteString(tok.raw)
 			depth++
 			needNewline = true
+			wroteContent = false
 		case tokenObjectClose, tokenArrayClose:
 			depth--
-			if !needNewline {
+			if wroteContent || !needNewline {
 				dst.WriteByte('\n')
 				writeIndent(dst, prefix, indent, depth)
 			}
@@ -448,6 +462,7 @@ func indentJSON5(dst *bytes.Buffer, src []byte, prefix, indent string) error {
 				writeIndent(dst, prefix, indent, depth)
 				needNewline = false
 			}
+			wroteContent = true
 			dst.WriteString(tok.raw)
 		}
 	}

@@ -3,6 +3,7 @@ package json5
 import (
 	"fmt"
 	"io"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 )
@@ -23,22 +24,28 @@ const (
 	tokenFalse
 	tokenNull
 	tokenIdentifier
+	tokenComment // emitted when preserveComments is true
 )
 
 type token struct {
-	typ   tokenType
-	value string // decoded string value for strings, decoded ident for identifiers, raw text otherwise
-	raw   string // raw source text
-	pos   int    // absolute byte offset in source
+	typ     tokenType
+	value   string // decoded string value for strings, decoded ident for identifiers, raw text otherwise
+	raw     string // raw source text
+	pos     int    // absolute byte offset in source
+	comment string // head comment text preceding this token (on separate line(s))
 }
 
 type scanner struct {
-	data  []byte
-	pos   int
-	r     io.Reader // optional reader for streaming (nil for Unmarshal)
-	eof   bool      // reader exhausted
-	base  int64     // bytes discarded so far, for absolute offsets
-	noRaw bool      // skip raw string allocation for string tokens
+	data             []byte
+	pos              int
+	r                io.Reader // optional reader for streaming (nil for Unmarshal)
+	eof              bool      // reader exhausted
+	base             int64     // bytes discarded so far, for absolute offsets
+	noRaw            bool      // skip raw string allocation for string tokens
+	pendingComment   string    // accumulated head comment text from skipWhitespace
+	inlineComment    string    // inline comment (on same line as previous token, before newline)
+	preserveComments bool      // when true, scan() emits tokenComment instead of skipping
+	pendingTokens    []token   // queued comment tokens to emit before next real token
 }
 
 // absPos returns the absolute byte offset in the input stream.
@@ -106,13 +113,29 @@ func isJSON5Whitespace(r rune) bool {
 	return unicode.Is(unicode.Zs, r)
 }
 
-// skipWhitespace skips whitespace and comments.
+// skipWhitespace skips whitespace and comments. Comments are classified as
+// inline (on the same line as the previous token, before any newline) or
+// head (after a newline). This allows the decoder to distinguish:
+//
+//	port: 8080, // inline comment
+//	// head comment
+//	host: "localhost"
+//
+// When preserveComments is true, comments are queued as tokenComment tokens
+// in pendingTokens instead of being stored in pendingComment/inlineComment.
 func (s *scanner) skipWhitespace() error {
+	s.pendingComment = ""
+	s.inlineComment = ""
+	sawNewline := false
 	for s.available() {
 		b := s.data[s.pos]
 		// Fast path for ASCII whitespace.
 		switch b {
-		case ' ', '\t', '\n', '\r', '\v', '\f':
+		case '\n', '\r':
+			sawNewline = true
+			s.pos++
+			continue
+		case ' ', '\t', '\v', '\f':
 			s.pos++
 			continue
 		}
@@ -123,14 +146,15 @@ func (s *scanner) skipWhitespace() error {
 			next := s.data[s.pos+1]
 			if next == '/' {
 				s.pos += 2
-				if err := s.skipLineComment(); err != nil {
+				if err := s.captureLineComment(sawNewline); err != nil {
 					return err
 				}
+				sawNewline = true // line comment ends the line
 				continue
 			}
 			if next == '*' {
 				s.pos += 2
-				if err := s.skipBlockComment(); err != nil {
+				if err := s.captureBlockComment(sawNewline); err != nil {
 					return err
 				}
 				continue
@@ -142,6 +166,9 @@ func (s *scanner) skipWhitespace() error {
 			s.ensure(utf8.UTFMax)
 			r, size := utf8.DecodeRune(s.data[s.pos:])
 			if isJSON5Whitespace(r) {
+				if r == '\u2028' || r == '\u2029' {
+					sawNewline = true
+				}
 				s.pos += size
 				continue
 			}
@@ -152,26 +179,36 @@ func (s *scanner) skipWhitespace() error {
 	return nil
 }
 
-func (s *scanner) skipLineComment() error {
+// captureLineComment reads a // comment and classifies it as inline
+// (if no newline preceded it) or head comment.
+func (s *scanner) captureLineComment(isHead bool) error {
+	start := s.pos
 	for s.available() {
 		b := s.data[s.pos]
-		s.pos++
 		if b == '\n' || b == '\r' {
+			s.storeComment(string(s.data[start:s.pos]), isHead)
+			s.pos++
 			return nil
 		}
-		// U+2028 (E2 80 A8) and U+2029 (E2 80 A9) are line terminators.
 		if b == 0xE2 && s.ensure(2) &&
 			s.data[s.pos] == 0x80 && (s.data[s.pos+1] == 0xA8 || s.data[s.pos+1] == 0xA9) {
-			s.pos += 2
+			s.storeComment(string(s.data[start:s.pos]), isHead)
+			s.pos += 3
 			return nil
 		}
+		s.pos++
 	}
+	// EOF after comment is fine.
+	s.storeComment(string(s.data[start:s.pos]), isHead)
 	return nil
 }
 
-func (s *scanner) skipBlockComment() error {
+// captureBlockComment reads a /* */ comment and classifies it.
+func (s *scanner) captureBlockComment(isHead bool) error {
+	start := s.pos
 	for s.available() {
 		if s.data[s.pos] == '*' && s.ensure(2) && s.data[s.pos+1] == '/' {
+			s.storeComment(string(s.data[start:s.pos]), isHead)
 			s.pos += 2
 			return nil
 		}
@@ -180,15 +217,73 @@ func (s *scanner) skipBlockComment() error {
 	return s.error("unterminated block comment")
 }
 
-// scan returns the next token.
+func (s *scanner) storeComment(text string, isHead bool) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	if s.preserveComments {
+		// In preserveComments mode, queue a tokenComment to be emitted by scan().
+		// value indicates placement: "inline" (same line) or "head" (own line).
+		placement := "head"
+		if !isHead {
+			placement = "inline"
+		}
+		raw := "// " + text
+		s.pendingTokens = append(s.pendingTokens, token{
+			typ:   tokenComment,
+			value: placement,
+			raw:   raw,
+			pos:   s.absPos(),
+		})
+		return
+	}
+	if isHead {
+		if s.pendingComment != "" {
+			s.pendingComment += "\n" + text
+		} else {
+			s.pendingComment = text
+		}
+	} else {
+		if s.inlineComment == "" {
+			s.inlineComment = text
+		} else {
+			if s.pendingComment != "" {
+				s.pendingComment += "\n" + text
+			} else {
+				s.pendingComment = text
+			}
+		}
+	}
+}
+
+// scan returns the next token. Any comments that preceded the token
+// are captured in the token's comment field.
 func (s *scanner) scan() (token, error) {
+	// In preserveComments mode, drain queued comment tokens first.
+	if s.preserveComments && len(s.pendingTokens) > 0 {
+		tok := s.pendingTokens[0]
+		s.pendingTokens = s.pendingTokens[1:]
+		return tok, nil
+	}
+
 	if err := s.skipWhitespace(); err != nil {
 		return token{}, err
 	}
+
+	// In preserveComments mode, if skipWhitespace queued comment tokens,
+	// emit the first one now; the real token will come on the next call.
+	if s.preserveComments && len(s.pendingTokens) > 0 {
+		tok := s.pendingTokens[0]
+		s.pendingTokens = s.pendingTokens[1:]
+		return tok, nil
+	}
+
+	comment := s.pendingComment
 	s.compact()
 
 	if !s.available() {
-		return token{typ: tokenEOF, pos: s.absPos()}, nil
+		return token{typ: tokenEOF, pos: s.absPos(), comment: comment}, nil
 	}
 
 	apos := s.absPos()
@@ -197,34 +292,44 @@ func (s *scanner) scan() (token, error) {
 	switch ch {
 	case '{':
 		s.pos++
-		return token{typ: tokenObjectOpen, raw: "{", pos: apos}, nil
+		return token{typ: tokenObjectOpen, raw: "{", pos: apos, comment: comment}, nil
 	case '}':
 		s.pos++
-		return token{typ: tokenObjectClose, raw: "}", pos: apos}, nil
+		return token{typ: tokenObjectClose, raw: "}", pos: apos, comment: comment}, nil
 	case '[':
 		s.pos++
-		return token{typ: tokenArrayOpen, raw: "[", pos: apos}, nil
+		return token{typ: tokenArrayOpen, raw: "[", pos: apos, comment: comment}, nil
 	case ']':
 		s.pos++
-		return token{typ: tokenArrayClose, raw: "]", pos: apos}, nil
+		return token{typ: tokenArrayClose, raw: "]", pos: apos, comment: comment}, nil
 	case ':':
 		s.pos++
-		return token{typ: tokenColon, raw: ":", pos: apos}, nil
+		return token{typ: tokenColon, raw: ":", pos: apos, comment: comment}, nil
 	case ',':
 		s.pos++
-		return token{typ: tokenComma, raw: ",", pos: apos}, nil
+		return token{typ: tokenComma, raw: ",", pos: apos, comment: comment}, nil
 	case '"', '\'':
-		return s.scanString()
+		tok, err := s.scanString()
+		tok.comment = comment
+		return tok, err
 	case '+', '-':
-		return s.scanSignedNumber()
+		tok, err := s.scanSignedNumber()
+		tok.comment = comment
+		return tok, err
 	case '.':
-		return s.scanNumber()
+		tok, err := s.scanNumber()
+		tok.comment = comment
+		return tok, err
 	default:
 		if ch >= '0' && ch <= '9' {
-			return s.scanNumber()
+			tok, err := s.scanNumber()
+			tok.comment = comment
+			return tok, err
 		}
 		if isIdentStart(rune(ch)) || ch >= 0x80 || ch == '\\' {
-			return s.scanIdentifier()
+			tok, err := s.scanIdentifier()
+			tok.comment = comment
+			return tok, err
 		}
 		return token{}, s.error(fmt.Sprintf("unexpected character %q", string(rune(ch))))
 	}

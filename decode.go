@@ -985,6 +985,10 @@ func (d *decodeState) orderedMapInterface() (*OrderedMap, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		// Any inline comment from this scan belongs to the previous entry.
+		d.setLastInlineComment(m)
+
 		if tok.typ == tokenObjectClose {
 			return m, nil
 		}
@@ -996,12 +1000,14 @@ func (d *decodeState) orderedMapInterface() (*OrderedMap, error) {
 			if err != nil {
 				return nil, err
 			}
+			d.setLastInlineComment(m)
 			if tok.typ == tokenObjectClose {
 				return m, nil // trailing comma
 			}
 		}
 		first = false
 
+		headComment := tok.comment
 		key, err := d.resolveKey(tok)
 		if err != nil {
 			return nil, err
@@ -1023,7 +1029,16 @@ func (d *decodeState) orderedMapInterface() (*OrderedMap, error) {
 		if err != nil {
 			return nil, err
 		}
-		m.Set(key, val)
+		m.SetWithComment(key, val, headComment, "")
+	}
+}
+
+// setLastInlineComment assigns the scanner's inline comment (if any)
+// to the most recently added entry in the OrderedMap.
+func (d *decodeState) setLastInlineComment(m *OrderedMap) {
+	if d.scanner.inlineComment != "" && len(m.entries) > 0 {
+		m.entries[len(m.entries)-1].InlineComment = d.scanner.inlineComment
+		d.scanner.inlineComment = ""
 	}
 }
 
