@@ -52,6 +52,12 @@ var offsetCases = []struct {
 	{"raw/comma", "{p: 1\n  q: 2}", "q: 2", func() any { return new(rawCollector) }},
 	{"raw/colon", "{p 1}", "1}", func() any { return new(rawCollector) }},
 	{"raw/array-comma", "[1\n  2]", "2]", func() any { return new(rawCollector) }},
+	{"raw/value", "]", "]", func() any { return new(rawCollector) }},
+	{"raw/nested-value", "{p: ]}", "]}", func() any { return new(rawCollector) }},
+	{"raw/array-value", "[1, :]", ":]", func() any { return new(rawCollector) }},
+	{"raw/leading-comma", "[,1]", ",1]", func() any { return new(rawCollector) }},
+	{"raw/identifier", "{p: foo}", "foo}", func() any { return new(rawCollector) }},
+	{"raw/eof", "{p: ", "", func() any { return new(rawCollector) }},
 	// Arrays: slice, fixed array, interface.
 	{"slice/comma", "[1\n  2]", "2]", func() any { return new([]int) }},
 	{"fixed/comma", "[1\n  2]", "2]", func() any { return new([2]int) }},

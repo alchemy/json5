@@ -124,8 +124,11 @@ func (d *decodeState) collectRaw(tok token) ([]byte, error) {
 		return []byte("null"), nil
 	case tokenObjectOpen, tokenArrayOpen:
 		return d.collectRawComposite(tok)
+	case tokenEOF:
+		return nil, d.scanner.errorAt(tok, "unexpected end of input")
 	default:
-		return []byte(tok.raw), nil
+		// Not a value: a stray '}', ']', ':', ',' or a bare identifier.
+		return nil, d.scanner.errorAt(tok, fmt.Sprintf("unexpected token %q", tok.raw))
 	}
 }
 

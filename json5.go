@@ -301,11 +301,11 @@ func (enc *Encoder) Encode(v any) error {
 
 // Interfaces we check in order of priority during encoding/decoding.
 var (
-	marshalerType     = reflect.TypeOf((*Marshaler)(nil)).Elem()
-	unmarshalerType   = reflect.TypeOf((*Unmarshaler)(nil)).Elem()
-	jsonMarshalerType = reflect.TypeOf((*json.Marshaler)(nil)).Elem()
+	marshalerType       = reflect.TypeOf((*Marshaler)(nil)).Elem()
+	unmarshalerType     = reflect.TypeOf((*Unmarshaler)(nil)).Elem()
+	jsonMarshalerType   = reflect.TypeOf((*json.Marshaler)(nil)).Elem()
 	jsonUnmarshalerType = reflect.TypeOf((*json.Unmarshaler)(nil)).Elem()
-	textMarshalerType = reflect.TypeOf((*encoding.TextMarshaler)(nil)).Elem()
+	textMarshalerType   = reflect.TypeOf((*encoding.TextMarshaler)(nil)).Elem()
 	textUnmarshalerType = reflect.TypeOf((*encoding.TextUnmarshaler)(nil)).Elem()
-	numberType        = reflect.TypeOf(Number(""))
+	numberType          = reflect.TypeOf(Number(""))
 )
