@@ -98,9 +98,9 @@ func (d *decodeState) value(tok token, rv reflect.Value) error {
 	case tokenNull:
 		return d.literalNull(rv)
 	case tokenEOF:
-		return d.scanner.error("unexpected end of input")
+		return d.scanner.errorAt(tok, "unexpected end of input")
 	default:
-		return d.scanner.error(fmt.Sprintf("unexpected token %q", tok.raw))
+		return d.scanner.errorAt(tok, fmt.Sprintf("unexpected token %q", tok.raw))
 	}
 }
 
@@ -132,7 +132,7 @@ func (d *decodeState) collectRaw(tok token) ([]byte, error) {
 func (d *decodeState) collectRawComposite(tok token) ([]byte, error) {
 	d.depth++
 	if d.depth > maxNestingDepth {
-		return nil, d.scanner.error("exceeded max nesting depth")
+		return nil, d.scanner.errorAt(tok, "exceeded max nesting depth")
 	}
 	defer func() { d.depth-- }()
 
@@ -151,7 +151,7 @@ func (d *decodeState) collectRawComposite(tok token) ([]byte, error) {
 			}
 			if !first {
 				if t.typ != tokenComma {
-					return nil, d.scanner.error("expected comma in object")
+					return nil, d.scanner.errorAt(t, "expected comma in object")
 				}
 				t, err = d.scanner.scan()
 				if err != nil {
@@ -179,7 +179,7 @@ func (d *decodeState) collectRawComposite(tok token) ([]byte, error) {
 				return nil, err
 			}
 			if colon.typ != tokenColon {
-				return nil, d.scanner.error("expected colon after object key")
+				return nil, d.scanner.errorAt(colon, "expected colon after object key")
 			}
 			// Value
 			vt, err := d.scanner.scan()
@@ -208,7 +208,7 @@ func (d *decodeState) collectRawComposite(tok token) ([]byte, error) {
 		}
 		if !first {
 			if t.typ != tokenComma {
-				return nil, d.scanner.error("expected comma in array")
+				return nil, d.scanner.errorAt(t, "expected comma in array")
 			}
 			t, err = d.scanner.scan()
 			if err != nil {
@@ -284,7 +284,7 @@ func normalizeNumber(s string) []byte {
 func (d *decodeState) object(rv reflect.Value) error {
 	d.depth++
 	if d.depth > maxNestingDepth {
-		return d.scanner.error("exceeded max nesting depth")
+		return d.scanner.errorAfterOpen("exceeded max nesting depth")
 	}
 	defer func() { d.depth-- }()
 
@@ -337,7 +337,7 @@ func (d *decodeState) objectMap(rv reflect.Value) error {
 		}
 		if !first {
 			if tok.typ != tokenComma {
-				return d.scanner.error("expected comma in object")
+				return d.scanner.errorAt(tok, "expected comma in object")
 			}
 			tok, err = d.scanner.scan()
 			if err != nil {
@@ -361,7 +361,7 @@ func (d *decodeState) objectMap(rv reflect.Value) error {
 			return err
 		}
 		if colon.typ != tokenColon {
-			return d.scanner.error("expected colon after object key")
+			return d.scanner.errorAt(colon, "expected colon after object key")
 		}
 
 		// Value.
@@ -421,7 +421,7 @@ func (d *decodeState) objectStruct(rv reflect.Value) error {
 		}
 		if !first {
 			if tok.typ != tokenComma {
-				return d.scanner.error("expected comma in object")
+				return d.scanner.errorAt(tok, "expected comma in object")
 			}
 			tok, err = d.scanner.scan()
 			if err != nil {
@@ -444,7 +444,7 @@ func (d *decodeState) objectStruct(rv reflect.Value) error {
 			return err
 		}
 		if colon.typ != tokenColon {
-			return d.scanner.error("expected colon after object key")
+			return d.scanner.errorAt(colon, "expected colon after object key")
 		}
 
 		// Find field.
@@ -531,14 +531,14 @@ func (d *decodeState) resolveKey(tok token) (string, error) {
 	case tokenNull:
 		return "null", nil
 	default:
-		return "", d.scanner.error(fmt.Sprintf("expected object key, got %q", tok.raw))
+		return "", d.scanner.errorAt(tok, fmt.Sprintf("expected object key, got %q", tok.raw))
 	}
 }
 
 func (d *decodeState) array(rv reflect.Value) error {
 	d.depth++
 	if d.depth > maxNestingDepth {
-		return d.scanner.error("exceeded max nesting depth")
+		return d.scanner.errorAfterOpen("exceeded max nesting depth")
 	}
 	defer func() { d.depth-- }()
 
@@ -587,7 +587,7 @@ func (d *decodeState) arraySlice(rv reflect.Value) error {
 		}
 		if !first {
 			if tok.typ != tokenComma {
-				return d.scanner.error("expected comma in array")
+				return d.scanner.errorAt(tok, "expected comma in array")
 			}
 			tok, err = d.scanner.scan()
 			if err != nil {
@@ -623,7 +623,7 @@ func (d *decodeState) arrayFixed(rv reflect.Value) error {
 		}
 		if !first {
 			if tok.typ != tokenComma {
-				return d.scanner.error("expected comma in array")
+				return d.scanner.errorAt(tok, "expected comma in array")
 			}
 			tok, err = d.scanner.scan()
 			if err != nil {
@@ -695,7 +695,7 @@ func (d *decodeState) literalNumber(tok token, rv reflect.Value) error {
 		}
 		f, err := parseJSON5Number(s)
 		if err != nil {
-			return d.scanner.error(fmt.Sprintf("invalid number: %s", s))
+			return d.scanner.errorAt(tok, fmt.Sprintf("invalid number: %s", s))
 		}
 		rv.Set(reflect.ValueOf(f))
 		return nil
@@ -790,14 +790,14 @@ func (d *decodeState) skipValue(tok token) error {
 	case tokenString, tokenNumber, tokenTrue, tokenFalse, tokenNull:
 		return nil
 	default:
-		return d.scanner.error(fmt.Sprintf("unexpected token %q", tok.raw))
+		return d.scanner.errorAt(tok, fmt.Sprintf("unexpected token %q", tok.raw))
 	}
 }
 
 func (d *decodeState) skipObject() error {
 	d.depth++
 	if d.depth > maxNestingDepth {
-		return d.scanner.error("exceeded max nesting depth")
+		return d.scanner.errorAfterOpen("exceeded max nesting depth")
 	}
 	defer func() { d.depth-- }()
 
@@ -812,7 +812,7 @@ func (d *decodeState) skipObject() error {
 		}
 		if !first {
 			if tok.typ != tokenComma {
-				return d.scanner.error("expected comma in object")
+				return d.scanner.errorAt(tok, "expected comma in object")
 			}
 			tok, err = d.scanner.scan()
 			if err != nil {
@@ -830,7 +830,7 @@ func (d *decodeState) skipObject() error {
 			return err
 		}
 		if colon.typ != tokenColon {
-			return d.scanner.error("expected colon")
+			return d.scanner.errorAt(colon, "expected colon")
 		}
 		// Skip value.
 		valTok, err := d.scanner.scan()
@@ -846,7 +846,7 @@ func (d *decodeState) skipObject() error {
 func (d *decodeState) skipArray() error {
 	d.depth++
 	if d.depth > maxNestingDepth {
-		return d.scanner.error("exceeded max nesting depth")
+		return d.scanner.errorAfterOpen("exceeded max nesting depth")
 	}
 	defer func() { d.depth-- }()
 
@@ -861,7 +861,7 @@ func (d *decodeState) skipArray() error {
 		}
 		if !first {
 			if tok.typ != tokenComma {
-				return d.scanner.error("expected comma in array")
+				return d.scanner.errorAt(tok, "expected comma in array")
 			}
 			tok, err = d.scanner.scan()
 			if err != nil {
@@ -899,7 +899,7 @@ func (d *decodeState) valueInterface(tok token) (any, error) {
 		}
 		f, err := parseJSON5Number(tok.value)
 		if err != nil {
-			return nil, d.scanner.error(fmt.Sprintf("invalid number: %s", tok.value))
+			return nil, d.scanner.errorAt(tok, fmt.Sprintf("invalid number: %s", tok.value))
 		}
 		return f, nil
 	case tokenTrue:
@@ -909,16 +909,16 @@ func (d *decodeState) valueInterface(tok token) (any, error) {
 	case tokenNull:
 		return nil, nil
 	case tokenEOF:
-		return nil, d.scanner.error("unexpected end of input")
+		return nil, d.scanner.errorAt(tok, "unexpected end of input")
 	default:
-		return nil, d.scanner.error(fmt.Sprintf("unexpected token %q", tok.value))
+		return nil, d.scanner.errorAt(tok, fmt.Sprintf("unexpected token %q", tok.value))
 	}
 }
 
 func (d *decodeState) objectInterface() (map[string]any, error) {
 	d.depth++
 	if d.depth > maxNestingDepth {
-		return nil, d.scanner.error("exceeded max nesting depth")
+		return nil, d.scanner.errorAfterOpen("exceeded max nesting depth")
 	}
 	defer func() { d.depth-- }()
 
@@ -934,7 +934,7 @@ func (d *decodeState) objectInterface() (map[string]any, error) {
 		}
 		if !first {
 			if tok.typ != tokenComma {
-				return nil, d.scanner.error("expected comma in object")
+				return nil, d.scanner.errorAt(tok, "expected comma in object")
 			}
 			tok, err = d.scanner.scan()
 			if err != nil {
@@ -956,7 +956,7 @@ func (d *decodeState) objectInterface() (map[string]any, error) {
 			return nil, err
 		}
 		if colon.typ != tokenColon {
-			return nil, d.scanner.error("expected colon after object key")
+			return nil, d.scanner.errorAt(colon, "expected colon after object key")
 		}
 
 		valTok, err := d.scanner.scan()
@@ -974,7 +974,7 @@ func (d *decodeState) objectInterface() (map[string]any, error) {
 func (d *decodeState) orderedMapInterface() (*OrderedMap, error) {
 	d.depth++
 	if d.depth > maxNestingDepth {
-		return nil, d.scanner.error("exceeded max nesting depth")
+		return nil, d.scanner.errorAfterOpen("exceeded max nesting depth")
 	}
 	defer func() { d.depth-- }()
 
@@ -994,7 +994,7 @@ func (d *decodeState) orderedMapInterface() (*OrderedMap, error) {
 		}
 		if !first {
 			if tok.typ != tokenComma {
-				return nil, d.scanner.error("expected comma in object")
+				return nil, d.scanner.errorAt(tok, "expected comma in object")
 			}
 			tok, err = d.scanner.scan()
 			if err != nil {
@@ -1018,7 +1018,7 @@ func (d *decodeState) orderedMapInterface() (*OrderedMap, error) {
 			return nil, err
 		}
 		if colon.typ != tokenColon {
-			return nil, d.scanner.error("expected colon after object key")
+			return nil, d.scanner.errorAt(colon, "expected colon after object key")
 		}
 
 		valTok, err := d.scanner.scan()
@@ -1045,7 +1045,7 @@ func (d *decodeState) setLastInlineComment(m *OrderedMap) {
 func (d *decodeState) arrayInterface() ([]any, error) {
 	d.depth++
 	if d.depth > maxNestingDepth {
-		return nil, d.scanner.error("exceeded max nesting depth")
+		return nil, d.scanner.errorAfterOpen("exceeded max nesting depth")
 	}
 	defer func() { d.depth-- }()
 
@@ -1064,7 +1064,7 @@ func (d *decodeState) arrayInterface() ([]any, error) {
 		}
 		if !first {
 			if tok.typ != tokenComma {
-				return nil, d.scanner.error("expected comma in array")
+				return nil, d.scanner.errorAt(tok, "expected comma in array")
 			}
 			tok, err = d.scanner.scan()
 			if err != nil {

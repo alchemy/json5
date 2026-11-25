@@ -181,7 +181,7 @@ func Unmarshal(data []byte, v any) error {
 	if d.scanner.pos < len(d.scanner.data) {
 		return &SyntaxError{
 			msg:    fmt.Sprintf("unexpected trailing character %q", d.scanner.data[d.scanner.pos]),
-			Offset: int64(d.scanner.pos),
+			Offset: int64(d.scanner.absPos()),
 		}
 	}
 	return nil

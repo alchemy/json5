@@ -53,8 +53,24 @@ func (s *scanner) absPos() int {
 	return int(s.base) + s.pos
 }
 
+// error reports a syntax error at the scanner's current position. Use it
+// for errors detected mid-token (bad escape, unterminated string, ...).
 func (s *scanner) error(msg string) *SyntaxError {
 	return &SyntaxError{msg: msg, Offset: int64(s.absPos())}
+}
+
+// errorAt reports a syntax error about an already-scanned token, at the
+// token's start. tok.pos is absolute (it includes s.base), so the offset
+// is correct in streaming mode even after the buffer has been compacted.
+func (s *scanner) errorAt(tok token, msg string) *SyntaxError {
+	return &SyntaxError{msg: msg, Offset: int64(tok.pos)}
+}
+
+// errorAfterOpen reports a syntax error at the '{' or '[' that was just
+// scanned. scan consumes nothing past a token, so the one-byte bracket
+// sits immediately before the current position.
+func (s *scanner) errorAfterOpen(msg string) *SyntaxError {
+	return &SyntaxError{msg: msg, Offset: int64(s.absPos() - 1)}
 }
 
 // fill reads more data from the reader into the buffer. It only appends
